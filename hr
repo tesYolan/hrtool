@@ -6,6 +6,7 @@
 
 set -e
 
+OS=$(lsb_release --codename --short) || OS=
 BASEDIR=$(dirname $(readlink -f ${BASH_SOURCE[0]}))
 
 ############# Configurations #############
@@ -1293,7 +1294,14 @@ install_head-deps() {
     setup_venv
     # setup ROS repository
     $SUDO sh -c 'echo "deb http://packages.ros.org/ros/ubuntu $(lsb_release -sc) main" > /etc/apt/sources.list.d/ros-latest.list'
-    $SUDO apt-key adv --keyserver hkp://ha.pool.sks-keyservers.net --recv-key 0xB01FA116
+    case $OS in
+        trusty)
+            $SUDO apt-key adv --keyserver hkp://ha.pool.sks-keyservers.net --recv-key 0xB01FA116
+            ;;
+        xenial)
+            $SUDO apt-key adv --keyserver hkp://ha.pool.sks-keyservers.net:80 --recv-key 421C365BD9FF1F717815A3895523BAEEB01FA116
+            ;;
+    esac
 
     _install_webui_deps
 
@@ -1304,7 +1312,7 @@ install_head-deps() {
     $SUDO apt-get update
 
     local version=0.1.2
-    local debname=head-deps-all_${version}_amd64.deb
+    local debname=head-deps-all_${version}~${OS}_amd64.deb
     local url=https://github.com/hansonrobotics/binary_dependency/raw/master/$debname
     _download_deb_package
     _install_deb_packages ${debname} ${force}
@@ -1317,8 +1325,11 @@ install_head-deps() {
         pinyin==0.2.5 pyparsing transitions flask EasyProcess \
         psutil natsort apiai numexpr
 
-    wget_cache https://raw.githubusercontent.com/hansonrobotics/HEAD/master/scripts/patch/rosbridge.patch
-    $SUDO patch -N /opt/ros/indigo/lib/python2.7/dist-packages/rosbridge_library/internal/publishers.py ${HR_CACHE}/rosbridge.patch || true
+    local rosversion=$(rosversion -d)
+    if [[ $rosversion == 'indigo' ]]; then
+        wget_cache https://raw.githubusercontent.com/hansonrobotics/HEAD/master/scripts/patch/rosbridge.patch
+        $SUDO patch -N /opt/ros/indigo/lib/python2.7/dist-packages/rosbridge_library/internal/publishers.py ${HR_CACHE}/rosbridge.patch || true
+    fi
 
     install_head-hr-msgs $@
     install_head-saliency-tracker $@
@@ -2149,8 +2160,11 @@ execute() {
     esac
 }
 
-if [[ ! $(lsb_release --codename --short) == "trusty" ]]; then
-    error "Error: Only Ubuntu 14.04 (trusty) is supported" >&2
+if [[ -z $OS ]]; then
+    error "Can't determine OS" >&2
+fi
+if [[ $OS  != "trusty" && $OS != 'xenial' ]]; then
+    error "Error: Only Ubuntu 14.04 (trusty) and 16.04 (xenial) are supported" >&2
     exit 1
 fi
 
