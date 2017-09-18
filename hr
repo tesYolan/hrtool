@@ -13,12 +13,13 @@ DEFAULT_HR_WORKSPACE=$HOME/hansonrobotics
 USER_DATA_DIR=$HOME/.hr
 HR_PREFIX=/opt/hansonrobotics
 
-OPENCOG_REPOS=(cogutils atomspace opencog ros-behavior-scripting relex external-tools)
-HR_REPOS=(blender_api_msgs blender_api chatbot basic_head_api motors_safety pau2motors ros_pololu webui perception pi_vision performances ros_tts ttsserver)
-HR_OTHER_REPOS=()
-HR_LAUNCHPAD_REPOS=(launchpad)
-HEAD_PACKAGES=(head-hr head-hr-ext head-hr-msgs head-saliency-tracker head-chatbot head-motor-control head-python-ttsserver head-python-pololu-motors head-marky-markov head-deps head-pocketsphinx head-festival-api head-dynamixel-motor head-webui head-blender-api head-blender-api-msgs head-ros-pololu head-motors-safety head-basic-head-api head-pau2motors head-perception head-pi-vision head-performances head-ros-misc head-ros-tts head-python-emopy head-data head-ros-emotion head-torch head-python-openface head-ros-face-recognition head-ros-audio-stream)
+HR_DEV_REPOS=(hansonrobotics/blender_api_msgs:HEAD/src hansonrobotics/blender_api:HEAD/src hansonrobotics/chatbot:HEAD/src hansonrobotics/basic_head_api:HEAD/src hansonrobotics/motors_safety:HEAD/src hansonrobotics/pau2motors:HEAD/src hansonrobotics/ros_pololu:HEAD/src hansonrobotics/webui:HEAD/src hansonrobotics/perception:HEAD/src hansonrobotics/pi_vision:HEAD/src hansonrobotics/performances:HEAD/src hansonrobotics/ros_tts:HEAD/src hansonrobotics/ttsserver:HEAD/src)
+HR_LAUNCHPAD_REPOS=(hansonrobotics/launchpad:)
+HR_OPENCOG_DEV_REPOS=(hansonrobotics/cogutils:HROpenCog hansonrobotics/atomspace:HROpenCog hansonrobotics/opencog:HROpenCog hansonrobotics/ros-behavior-scripting:HROpenCog hansonrobotics/relex:HROpenCog hansonrobotics/external-tools:HROpenCog)
+OPENCOG_DEV_REPOS=(opencog/cogutils:OpenCog opencog/atomspace:OpenCog opencog/opencog:OpenCog opencog/ros-behavior-scripting:OpenCog opencog/relex:OpenCog opencog/external-tools:OpenCog)
 HR_LAUNCHPAD_DIR=$HR_WORKSPACE/launchpad
+
+HEAD_PACKAGES=(head-hr head-hr-ext head-hr-msgs head-saliency-tracker head-chatbot head-motor-control head-python-ttsserver head-python-pololu-motors head-marky-markov head-deps head-pocketsphinx head-festival-api head-dynamixel-motor head-webui head-blender-api head-blender-api-msgs head-ros-pololu head-motors-safety head-basic-head-api head-pau2motors head-perception head-pi-vision head-performances head-ros-misc head-ros-tts head-python-emopy head-data head-ros-emotion head-torch head-python-openface head-ros-face-recognition head-ros-audio-stream head-opencv)
 
 GITHUB_STORAGE_URL=https://raw.githubusercontent.com/hansonrobotics/binary_dependency/master
 GITHUB_STORAGE2_URL=https://$GITHUB_TOKEN@raw.githubusercontent.com/hansonrobotics/binary_dependency2/master
@@ -39,6 +40,7 @@ if [[ -z $ROS_PKG_PREFIX ]]; then
     ROS_PKG_PREFIX=$HR_PREFIX/ros
 fi
 
+export HR_WORKSPACE
 export PKG_CONFIG_PATH=${HR_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH}
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$HR_PREFIX/lib
 export PATH=/usr/lib/ccache:$PATH
@@ -299,6 +301,107 @@ clone() {
     fi
 }
 
+_parse_repo_string() {
+    local item=$1
+    local ore owner repo dest workdir
+    if [[ ! $item == *:* ]]; then
+        error "Invalid repository string format: $item"
+        return 1
+    fi
+    ore=${item%:*}
+    owner=${ore%/*}
+    repo=${ore#*/}
+    dest=$HR_WORKSPACE/${item#*:}
+    workdir=${dest%/}/$repo
+    echo $owner
+    echo $repo
+    echo $workdir
+}
+
+_get_repo() {
+    local args
+    mapfile -t args <<<"$(_parse_repo_string $1)"
+    local owner=${args[0]}
+    local repo=${args[1]}
+    local workdir=${args[2]}
+    clone $owner $repo $(dirname $workdir)
+    if [[ -f $workdir/.gitmodules ]]; then
+        git -C $workdir submodule update --init --recursive
+    fi
+}
+
+_update_repo() {
+    local DEFAULT_BRANCH="master"
+    local args
+    mapfile -t args <<<"$(_parse_repo_string $1)"
+    local owner=${args[0]}
+    local repo=${args[1]}
+    local workdir=${args[2]}
+    if [[ ! -d $workdir ]]; then
+        error "Can't find repo $ore"
+        return
+    fi
+    branch=$(git -C ${workdir} rev-parse --abbrev-ref HEAD)
+    if [[ $branch != $DEFAULT_BRANCH ]]; then
+        warn "[${repo}] Branch is not (${DEFAULT_BRANCH}) branch (${branch}). Skip."
+        return
+    fi
+    info "Updating [${repo}]"
+    git -C ${workdir} pull origin $DEFAULT_BRANCH
+    if [[ -f ${workdir}/.gitmodules ]]; then
+        git -C ${workdir} submodule update --init --recursive
+    fi
+    info "Updating [${repo}] is done"
+}
+
+_check_repo_changes() {
+    local args repo workdir branch
+    mapfile -t args <<<"$(_parse_repo_string $1)"
+    repo=${args[1]}
+    workdir=${args[2]}
+    if [[ -d $workdir ]]; then
+        branch=$(git -C $workdir rev-parse --abbrev-ref HEAD)
+        if [[ $branch != 'master' ]]; then
+            warn "HEAD branch is not master $(pwd)" 1>&2
+            return 1
+        fi
+        if [[ $(git -C $workdir status -uno --porcelain|wc -c) != 0 ]]; then
+            warn "Plese commit the change(s) $(pwd)" 1>&2
+            warn $(git -C $workdir status --porcelain) 1>&2
+            return 1
+        fi
+        if [[ $(git -C $workdir diff --name-only master origin/master|wc -c) != 0 ]]; then
+            warn "Master branch is not synchronized with origin $(pwd)" 1>&2
+            return 1
+        fi
+        info "Check $repo"
+    fi
+}
+
+_get_repos() {
+    local repos=$@
+    for item in ${repos[@]}
+    do
+        _get_repo ${item}
+    done
+}
+
+_update_repos() {
+    local repos=$@
+    for item in ${repos[@]}
+    do
+        _update_repo ${item}
+    done
+}
+
+_check_repos_changes() {
+    local repos=(${HR_LAUNCHPAD_REPOS[@]} ${HR_DEV_REPOS[@]} ${OPENCOG_DEV_REPOS[@]})
+    for item in ${repos[@]}
+    do
+        _check_repo_changes $item
+    done
+}
+
 _list_robots() {
     for f in $(find $1 -name config.yaml); do
         if grep "botname" $f>/dev/null; then
@@ -438,29 +541,18 @@ print_repo_info() {
     local lg='git log -1 --no-merges --abbrev-commit --decorate --date=relative'
     local commit='--format=format:"%C(bold blue)%h%C(reset) %C(white)%<(50,trunc)%s%C(reset) %C(dim white)- %<(20,trunc)%an%C(reset) %C(bold green)%<(20,trunc)%ar%C(reset)"'
     local format="%-32s %-15s %s"
+    local repos=(${HR_LAUNCHPAD_REPOS[@]} ${HR_DEV_REPOS[@]} ${OPENCOG_DEV_REPOS[@]})
+    local item args owner repo workdir
     printf "${format}\n" "Repository" "Branch" "Commit"
-    for repo in ${HR_REPOS[*]}
+    for item in ${repos[@]}
     do
-        if [[ -d $HR_WORKSPACE/HEAD/src/$repo ]]; then
-            cd $HR_WORKSPACE/HEAD/src/$repo
+        mapfile -t args <<<"$(_parse_repo_string $item)"
+        repo=${args[1]}
+        workdir=${args[2]}
+        if [[ -d $workdir ]]; then
+            cd $workdir
             branch=$(git rev-parse --abbrev-ref HEAD)
             printf "${format}\n" "$repo" "$branch" "$(eval $lg $commit)"
-        fi
-    done
-    for repo in ${HR_OTHER_REPOS[*]}
-    do
-        if [[ -d $HR_WORKSPACE/$repo ]]; then
-            cd $HR_WORKSPACE/$repo
-            branch=$(git rev-parse --abbrev-ref HEAD)
-            printf "${format}\n" "$repo" "$branch" "$(eval $lg $commit)"
-        fi
-    done
-    for repo in ${OPENCOG_REPOS[*]}
-    do
-        if [[ -d $HR_WORKSPACE/opencog/$repo ]]; then
-            cd $HR_WORKSPACE/opencog/$repo
-            branch=$(git rev-parse --abbrev-ref HEAD)
-            printf "${format}\n" "opencog/$repo" "$branch" "$(eval $lg $commit)"
         fi
     done
     echo ''
@@ -798,7 +890,7 @@ _install_link_grammar() {
     tar -zxf ${HR_CACHE}/link-grammar-5.3.13.tar.gz -C /tmp
     mkdir -p /tmp/link-grammar-5.3.13/build
     cd /tmp/link-grammar-5.3.13/build
-    JAVA_HOME=/usr/lib/jvm/default-java
+    JAVA_HOME=${JAVA_HOME:-/usr/lib/jvm/default-java}
     ../configure
     make -j$(nproc)
     $SUDO make install
@@ -844,66 +936,11 @@ _install_marytts() {
     unzip -qod ~/.hr/tts/marytts ${HR_CACHE}/marytts-5.1.2.zip
 }
 
-_install_misc() {
-    local pkgs=()
-
-    # For rosbridge_server
-    pkgs+=(python-bson)
-
-    # For pololu-motors
-    # DO NOT UPGRADE WITH PIP
-    pkgs+=(python-serial)
-
-    # For Blender
-    pkgs+=(python3-numpy)
-
-    # For running scripts
-    pkgs+=(tmux)
-
-    # For tts playing audio
-    pkgs+=(python-pyglet)
-
-    # For chatbot
-    pkgs+=(python-yaml)
-
-    # Swig for iflytek SDK
-    pkgs+=(swig)
-
-    # For rospy to run with python3
-    pkgs+=(python3-yaml)
-
-    # For telnet automation
-    pkgs+=(expect)
-
-    # For audio recording
-    pkgs+=(pulseaudio python-pyaudio)
-
-    # For window layout
-    pkgs+=(xdotool)
-
-    apt_get_install "${pkgs[@]}"
-
-    # For chatbot
-    pip2_install num2words
-
-    # For Chinese tts
-    pip2_install pinyin==0.2.5
-
-    # For speech2command
-    pip2_install pyparsing
-
-    # For performances
-    pip2_install transitions
-
-    # For webui
-    pip2_install flask EasyProcess psutil natsort
-}
-
 _install_test_deps() {
     apt_get_install socat
 
     # WebUI compatable webserver
-    $SUDO npm install xmlhttprequest --prefix $HR_WORKSPACE/$PROJECT/src/chatbot/scripts
+    $SUDO npm install xmlhttprequest --prefix $HR_WORKSPACE/HEAD/src/chatbot/scripts
 
     # for python test coverage
     $SUDO pip install coverage
@@ -913,9 +950,16 @@ _install_webui_deps() {
     # Remove npm and nodejs if needed
     # sudo npm uninstall -g npm
     # sudo apt-get remove nodejs
-
-    # See https://github.com/nodesource/distributions#debinstall
-    if ! hash nodejs; then
+    if hash nodejs; then
+        local ver=$(nodejs -v)
+        local major=$(echo ${ver#v} | cut -d. -f1)
+        if (( $major != 6 )); then
+            error "You need to remove nodejs and run again. Run these commands to remove it."
+            error "\"sudo npm uninstall -g npm; sudo apt-get remove nodejs\""
+            return 1
+        fi
+    else
+        # See https://github.com/nodesource/distributions#debinstall
         info "Installing nodejs"
         curl -sL https://deb.nodesource.com/setup_6.x | sudo -E bash -
         apt_get_install nodejs
@@ -926,23 +970,6 @@ _install_webui_deps() {
     fi
     if ! npm ls -g nodemon >/dev/null; then
         $SUDO npm install -g nodemon
-    fi
-}
-
-_install_opencv() {
-    if [[ ! -f ${HR_PREFIX}/lib/libopencv_core.so ]]; then
-        MD5SUMS["opencv-2.4.11.zip"]=32f498451bff1817a60e1aabc2939575
-        wget_cache https://downloads.sourceforge.net/project/opencvlibrary/opencv-unix/2.4.11/opencv-2.4.11.zip
-        $SUDO rm -rf /tmp/opencv-2.4.11
-        unzip ${HR_CACHE}/opencv-2.4.11.zip -d /tmp
-        cd /tmp/opencv-2.4.11
-        mkdir build
-        cd build
-        cmake -DWITH_FFMPEG=OFF -DWITH_CUDA=OFF -DWITH_OPENCL=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${HR_PREFIX} .. && make -j4
-        $SUDO make install
-        cp install_manifest.txt  ~/.hr/opencv_installed.txt
-        $SUDO rm -rf /tmp/opencv-2.4.11
-        cd ${HR_WORKSPACE}
     fi
 }
 
@@ -1097,6 +1124,7 @@ install_head-hr() {
     local url=https://github.com/$repo/releases/download/${version}/$debname
     _download_deb_package
     _install_deb_packages ${debname} ${force}
+    install_head-hr-ext $@
 }
 
 install_head-hr-ext() {
@@ -1297,12 +1325,11 @@ install_head-deps() {
         || $SUDO apt-key adv --keyserver hkp://pgp.mit.edu:80 --recv-key 421C365BD9FF1F717815A3895523BAEEB01FA116 \
         || $SUDO apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-key 421C365BD9FF1F717815A3895523BAEEB01FA116
 
-    _install_webui_deps
-
     # setup python2.6 repository
     add_ppa ppa:fkrull/deadsnakes
     # setup ruby2.3
     add_ppa ppa:brightbox/ruby-ng
+    add_ppa ppa:irie/blender
     $SUDO apt-get update
 
     local version=0.1.2
@@ -1310,6 +1337,8 @@ install_head-deps() {
     local url=https://github.com/hansonrobotics/binary_dependency/raw/master/$debname
     _download_deb_package
     _install_deb_packages ${debname} ${force}
+
+    _install_webui_deps
 
     # for blender to find ros packages
     pip3_install rospkg catkin_pkg
@@ -1531,6 +1560,17 @@ install_head-ros-audio-stream() {
     _install_deb_packages ${debname} ${force}
 }
 
+install_head-opencv() {
+    local prerelease
+    local force
+    _parse_install_options $@
+    local version=2.4.13
+    local debname=head-opencv_${version}_amd64.deb
+    local url=https://github.com/hansonrobotics/binary_dependency/raw/master/$debname
+    _download_deb_package
+    _install_deb_packages ${debname} ${force}
+}
+
 help_install() {
 cat << EOF
 hr install <dependency> [<dependency>] ...
@@ -1565,11 +1605,6 @@ uninstall_head-hr() {
 
 uninstall_head-hr-ext() {
     sudo apt-get remove head-hr-ext
-}
-
-uninstall_opencv() {
-    remove_installed_files $HOME/.hr/opencv_installed.txt
-    _remove_version opencv
 }
 
 uninstall_head-hr-msgs() {
@@ -1712,6 +1747,10 @@ uninstall_head-ros-audio-stream() {
     sudo apt-get remove head-ros-audio-stream
 }
 
+uninstall_head-opencv() {
+    sudo apt-get remove head-opencv
+}
+
 help_uninstall() {
 cat << EOF
 hr uninstall <component> [<component>] ...
@@ -1733,58 +1772,19 @@ EOF
 update_head() {
     read_workspace
     info "Updating HEAD source code"
-    local DEFAULT_BRANCH="master"
-    for repo in ${HR_REPOS[*]}
-    do
-        if [[ ! -d $HR_WORKSPACE/HEAD/src/$repo ]]; then
-            clone hansonrobotics $repo $HR_WORKSPACE/HEAD/src
-        fi
-        cd $HR_WORKSPACE/HEAD/src/$repo
-        branch=$(git rev-parse --abbrev-ref HEAD)
-        if [[ $branch != $DEFAULT_BRANCH ]]; then
-            warn "[${repo}] Branch is not (${DEFAULT_BRANCH}) branch (${branch}). Skip."
-            continue
-        fi
-        info "Updating [${repo}]"
-        git pull origin $DEFAULT_BRANCH
-        info "Updating [${repo}] is done"
-    done
-    for repo in ${HR_OTHER_REPOS[*]}
-    do
-        if [[ ! -d $HR_WORKSPACE/$repo ]]; then
-            clone hansonrobotics $repo $HR_WORKSPACE
-            git -C $HR_WORKSPACE/$repo submodule update --init --recursive
-        fi
-        cd $HR_WORKSPACE/$repo
-        branch=$(git rev-parse --abbrev-ref HEAD)
-        if [[ $branch != $DEFAULT_BRANCH ]]; then
-            warn "[${repo}] Branch is not (${DEFAULT_BRANCH}) branch (${branch}). Skip."
-            continue
-        fi
-        info "Updating [${repo}]"
-        git pull origin $DEFAULT_BRANCH
-        git -C $HR_WORKSPACE/$repo submodule update --recursive --remote
-        info "Updating [${repo}] is done"
-    done
+    local role=$(read_role)
+    local repos=(${HR_LAUNCHPAD_REPOS[@]})
+    if [[ $role  == "developer" ]]; then
+        repos=(${repos[@]} ${HR_DEV_REPOS[@]})
+    fi
+    _update_repos ${repos[@]}
     info "Updating HEAD source code is done"
 }
 
 update_opencog() {
     read_workspace
     info "Updating OpenCog source code"
-    local DEFAULT_BRANCH="master"
-    for repo in ${OPENCOG_REPOS[*]}
-    do
-        cd $HR_WORKSPACE/opencog/$repo
-        branch=$(git rev-parse --abbrev-ref HEAD)
-        if [[ $branch != $DEFAULT_BRANCH ]]; then
-            warn "[${repo}] Branch is not (${DEFAULT_BRANCH}) branch (${branch}). Skip."
-            continue
-        fi
-        info "Updating [${repo}]"
-        git pull origin $DEFAULT_BRANCH
-        info "Updating [${repo}] is done"
-    done
+    _update_repos ${OPENCOG_DEV_REPOS[@]}
     info "Updating OpenCog source code is done"
 }
 
@@ -1801,35 +1801,27 @@ EOF
 
 get_opencog() {
     read_workspace || hr_init
-    info "Cloning OpenCog source code"
-    for repo in ${OPENCOG_REPOS[*]}
-    do
-        clone opencog $repo $HR_WORKSPACE/opencog
-    done
-    info "Cloning OpenCog source code is done"
+    git config --global credential.helper 'cache --timeout=36000'
+     _get_repos ${OPENCOG_DEV_REPOS[@]}
+    #parallel _get_repo ::: ${OPENCOG_DEV_REPOS[@]}
 }
 
 get_head() {
     read_workspace || hr_init
     git config --global credential.helper 'cache --timeout=36000'
     local role=$(read_role)
+    local repos=(${HR_LAUNCHPAD_REPOS[@]})
     if [[ $role  == "developer" ]]; then
-        info "Cloning HR source code"
-        for repo in ${HR_REPOS[*]}
-        do
-            clone hansonrobotics $repo $HR_WORKSPACE/HEAD/src
-        done
-        for repo in ${HR_OTHER_REPOS[*]}
-        do
-            clone hansonrobotics $repo $HR_WORKSPACE
-            git -C $HR_WORKSPACE/$repo submodule update --init --recursive
-        done
-        info "Cloning HR source code is done"
+        repos=(${repos[@]} ${HR_DEV_REPOS[@]})
     fi
-    for repo in ${HR_LAUNCHPAD_REPOS[*]}
-    do
-        clone hansonrobotics $repo $HR_WORKSPACE
-    done
+    _get_repos ${repos[@]}
+    #parallel _get_repo ::: ${repos[@]}
+}
+
+get_hropencog() {
+    read_workspace || hr_init
+    git config --global credential.helper 'cache --timeout=36000'
+     _get_repos ${HR_OPENCOG_DEV_REPOS[@]}
 }
 
 _get_openface_models() {
@@ -1938,24 +1930,28 @@ _build_full-head() {
 
 build_opencog() {
     read_workspace
-    for repo in ${OPENCOG_REPOS[*]}
+    local args repo workdir
+    for item in ${OPENCOG_DEV_REPOS[*]}
     do
+        mapfile -t args <<<"$(_parse_repo_string $item)"
+        repo=${args[1]}
+        workdir=${args[2]}
         if [[ $repo != 'relex' && \
               $repo != 'external-tools' && \
               $repo != 'ros-behavior-scripting' ]]; then
-            if [[ ! -d $HR_WORKSPACE/opencog/$repo/build ]]; then
-                mkdir $HR_WORKSPACE/opencog/$repo/build
+            if [[ ! -d $workdir/build ]]; then
+                mkdir $workdir/build
             fi
-            cd $HR_WORKSPACE/opencog/$repo/build && cmake ..  && make -j$(nproc) && $SUDO make install
+            cd $workdir/build && cmake ..  && make -j$(nproc) && $SUDO make install
         fi
         if [[ $repo == 'relex' ]]; then
-            cd $HR_WORKSPACE/opencog/$repo && JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF8 ant build && $SUDO ant install
+            cd $workdir && JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF8 ant build && $SUDO ant install
         fi
         if [[ $repo == 'ros-behavior-scripting' ]]; then
-            if [[ ! -d $HR_WORKSPACE/opencog/$repo/build ]]; then
-                mkdir $HR_WORKSPACE/opencog/$repo/build
+            if [[ ! -d $workdir/build ]]; then
+                mkdir $workdir/build
             fi
-            cd $HR_WORKSPACE/opencog/$repo/build && \
+            cd $workdir/build && \
             source /opt/hansonrobotics/ros/setup.bash && \
             cmake ..  && make -j$(nproc) && $SUDO make install
         fi
@@ -1983,13 +1979,17 @@ clean_head() {
 
 clean_opencog() {
     read_workspace
+    local item args repo workdir
     rm -rf ~/.cache/guile
     rm -rf ~/.hr/cache/oc_aiml
     if [[ ! -z $HR_WORKSPACE ]]; then
-        for repo in ${OPENCOG_REPOS[*]}
+        for item in ${OPENCOG_DEV_REPOS[*]}
         do
+            mapfile -t args <<<"$(_parse_repo_string $item)"
+            repo=${args[1]}
+            workdir=${args[2]}
             if [[ $repo != 'relex' && $repo != 'external-tools' ]]; then
-                $SUDO rm -rf $HR_WORKSPACE/opencog/$repo/build
+                $SUDO rm -rf $workdir/build
             fi
         done
     fi
@@ -2013,71 +2013,9 @@ Clean up components
 EOF
 }
 
-check_local_changes() {
-    read_workspace
-    for repo in ${OPENCOG_REPOS[*]}
-    do
-        if [[ -d $HR_WORKSPACE/opencog/$repo ]]; then
-            cd $HR_WORKSPACE/opencog/$repo
-            branch=$(git rev-parse --abbrev-ref HEAD)
-            if [[ $branch != 'master' ]]; then
-                warn "HEAD branch is not master $(pwd)" 1>&2
-                return 1
-            fi
-            if [[ $(git status -uno --porcelain|wc -c) != 0 ]]; then
-                warn "Plese commit the change(s) $(pwd)" 1>&2
-                warn $(git status --porcelain) 1>&2
-                return 1
-            fi
-            if [[ $(git diff --name-only master origin/master|wc -c) != 0 ]]; then
-                warn "Master branch is not synchronized with origin $(pwd)" 1>&2
-                return 1
-            fi
-        fi
-    done
-    cd $HR_WORKSPACE
-}
-
-switch_opencog_repo() {
-    read_workspace
-    DOMAIN=${1}
-    [[ -z $DOMAIN ]] && error "Wrong arguments, either hansonrobotics or opencog" && exit
-    check_local_changes || exit 1
-    warn "Switching to $DOMAIN repositories"
-    for repo in ${OPENCOG_REPOS[*]}
-    do
-        cd $HR_WORKSPACE
-        if [[ -d $HR_WORKSPACE/opencog/$repo ]]; then
-            info "Set [$repo] origin to https://github.com/$DOMAIN/$repo"
-            cd opencog/$repo
-            git remote remove old || true
-            git remote rename origin old
-            git remote add -f origin https://github.com/$DOMAIN/$repo
-            git branch master -u origin/master
-            git reset --hard origin/master
-        else
-            clone $DOMAIN $repo opencog
-        fi
-    done
-}
-
-set_normal_opencog() {
-    switch_opencog_repo hansonrobotics
-    update_opencog
-}
-
-set_dev_opencog() {
-    switch_opencog_repo opencog
-    update_opencog
-}
-
 help_cmd() {
 cat << EOF
 hr cmd <command> [args]
-
-Some useful commands:
-
-    switch_opencog_repo <hansonrobotics|opencog>        Set the upstream of OpenCog repositories
 
 EOF
 }
@@ -2158,5 +2096,6 @@ fi
 
 if [[ ! $(readlink -f ${BASH_SOURCE[0]}) == $(readlink -f $0) ]]; then return; fi
 if [[ $# == 0 ]]; then show_help; exit 0; fi
+export -f _get_repo clone info warn error
 execute $@
 ############# End of Main #############

@@ -1,16 +1,21 @@
- - [Install hrtool](#hrtool)
- - [Install hrtool extension (optional)](#hrtoolext)
- - [Install HEAD](#head)
+ - [Installation](#installation)
+   - [Install hrtool](#hrtool)
+   - [Install hrtool extension (optional)](#hrtoolext)
+   - [Initialize Workspace](#init)
+   - [Install HEAD](#head)
  - [Run robot](#run)
+ - [Update hrtool](#update)
+ - [Usage](#usage)
  - [Migrate from old hrtool](#migrate)
 
-# <a name="hrtool"></a>Install hrtool 
+# <a name="installatin"></a>Installation
+## <a name="hrtool"></a>Install hrtool 
 
 Run this single command to install hrtool.
 
 `curl https://raw.githubusercontent.com/hansonrobotics/hrtool/master/get_hr.bash|bash`
 
-# <a name="hrtoolext"></a>Install hrtool extension (optional)
+## <a name="hrtoolext"></a>Install hrtool extension (optional)
 
 **This allows you to access private resources**
 
@@ -30,13 +35,29 @@ Run this single command to install hrtool.
 
     `hr install head-hr-ext`
 
-# <a name="head"></a>Install HEAD
+## <a name="init"></a>Initialize Workspace
+
+`hr init [workspace]`
+
+## <a name="head"></a>Install HEAD
 
 `hr install head`
 
 # <a name="run"></a>Run robot
 
 `hr run <robot>`
+
+# <a name="update"></a>Update hrtool
+
+`hr install head-hr`
+
+# <a name="usage"></a>Usage
+
+1. `hr` to show all the available commands.
+2. `hr install -p <package>` to install pre-release packages.
+3. `hr install -f <package>` to force install packages.
+4. `hr install head` to install/update HEAD stack.
+5. `hr role <user|developer>` to switch roles. 
 
 # <a name="migrate"></a>Migrate from old hrtool
 
